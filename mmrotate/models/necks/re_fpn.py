@@ -133,10 +133,17 @@ class ConvModule(enn.EquivariantModule):
         """Forward function of ConvModule."""
         for layer in self.order:
             if layer == 'conv':
+                if x.type != self.in_type:
+                    import pdb; pdb.set_trace()
+                    x = enn.GeometricTensor(x, self.in_type)
                 x = self.conv(x)
             elif layer == 'norm' and norm and self.with_norm:
+                if x.type == self.in_type:
+                    x = x.tensor
                 x = self.norm(x)
             elif layer == 'act' and activate and self.with_activatation:
+                if x.type == self.in_type:
+                    x = x.tensor
                 x = self.activate(x)
         return x
 

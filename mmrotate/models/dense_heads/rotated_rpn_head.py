@@ -10,7 +10,7 @@ from mmdet.core import (anchor_inside_flags, images_to_levels, multi_apply,
                         unmap)
 from mmdet.models.dense_heads.anchor_head import AnchorHead
 
-from mmrotate.core import obb2xyxy
+from mmrotate.core import obb2xyxy, merge_aug_proposals
 from ..builder import ROTATED_HEADS
 
 
@@ -517,3 +517,40 @@ class RotatedRPNHead(AnchorHead):
             return proposals.new_zeros(0, 5)
 
         return dets[:cfg.max_per_img]
+
+
+    def aug_test_rpn(self, feats, img_metas):
+        """Test with augmentation for only for ``RPNHead`` and its variants,
+        e.g., ``GARPNHead``, etc.
+
+        Args:
+            feats (tuple[Tensor]): Features from the upstream network, each is
+                        a 4D-tensor.
+            img_metas (list[dict]): Meta info of each image.
+
+        Returns:
+            list[Tensor]: Proposals of each image, each item has shape (n, 5),
+                where 5 represent (tl_x, tl_y, br_x, br_y, score).
+        """
+        samples_per_gpu = len(img_metas[0])
+        aug_proposals = [[] for _ in range(samples_per_gpu)]
+        for x, img_meta in zip(feats, img_metas):
+            proposal_list = self.simple_test_rpn(x, img_meta)
+            # import pdb; pdb.set_trace()
+            for i, proposals in enumerate(proposal_list):
+                aug_proposals[i].append(proposals)
+        # reorganize the order of 'img_metas' to match the dimensions
+        # of 'aug_proposals'
+        aug_img_metas = []
+        for i in range(samples_per_gpu):
+            aug_img_meta = []
+            for j in range(len(img_metas)):
+                aug_img_meta.append(img_metas[j][i])
+            aug_img_metas.append(aug_img_meta)
+        # after merging, proposals will be rescaled to the original image size
+        # merged_proposals = [
+        #     merge_aug_proposals(proposals, aug_img_meta, self.test_cfg)
+        #     for proposals, aug_img_meta in zip(aug_proposals, aug_img_metas)
+        # ]
+        # import pdb; pdb.set_trace()
+        return aug_proposals[0]

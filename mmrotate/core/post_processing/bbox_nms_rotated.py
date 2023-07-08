@@ -39,7 +39,8 @@ def multiclass_nms_rotated(multi_bboxes,
             multi_scores.size(0), num_classes, 5)
     scores = multi_scores[:, :-1]
 
-    labels = torch.arange(num_classes, dtype=torch.long)
+    device = bboxes.device
+    labels = torch.arange(num_classes, dtype=torch.long).to(device)
     labels = labels.view(1, -1).expand_as(scores)
     bboxes = bboxes.reshape(-1, 5)
     scores = scores.reshape(-1)
@@ -54,7 +55,14 @@ def multiclass_nms_rotated(multi_bboxes,
         score_factors = score_factors.reshape(-1)
         scores = scores * score_factors
 
-    inds = valid_mask.nonzero(as_tuple=False).squeeze(1)
+    
+    inds = valid_mask.nonzero(as_tuple=False).squeeze(1).to(device)
+    # if torch.distributed.get_rank() == 0:
+    #     print("device: ", device)
+    #     print("scores device:", scores.device)
+    #     print("labels device:", labels.device)
+    #     print("inds device:", inds.device)
+
     bboxes, scores, labels = bboxes[inds], scores[inds], labels[inds]
 
     if bboxes.numel() == 0:
@@ -78,13 +86,23 @@ def multiclass_nms_rotated(multi_bboxes,
     else:
         bboxes_for_nms = bboxes + offsets[:, None]
     _, keep = nms_rotated(bboxes_for_nms, scores, nms.iou_thr)
-
     if max_num > 0:
         keep = keep[:max_num]
 
+    # x = torch.tensor([[ 3.2941e+02,  1.7679e+02,  1.9646e+02,  5.6279e+01,  1.4528e-01],
+    #     [3.3062e+02,  1.7823e+02,  2.0387e+02,  5.7772e+01,  1.5132e-01]])
+    
     bboxes = bboxes[keep]
     scores = scores[keep]
     labels = labels[keep]
+
+    # again
+    _, keep = nms_rotated(bboxes, scores, 0.95)
+    bboxes = bboxes[keep]
+    scores = scores[keep]
+    labels = labels[keep]
+
+    # import pdb; pdb.set_trace()
 
     if return_inds:
         return torch.cat([bboxes, scores[:, None]], 1), labels, keep

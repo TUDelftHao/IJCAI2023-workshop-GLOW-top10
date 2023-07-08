@@ -47,6 +47,7 @@ class DOTADataset(CustomDataset):
                  **kwargs):
         self.version = version
         self.difficulty = difficulty
+        self.prefix = ".jpg"
 
         super(DOTADataset, self).__init__(ann_file, pipeline, **kwargs)
 
@@ -65,11 +66,11 @@ class DOTADataset(CustomDataset):
         ann_files = glob.glob(ann_folder + '/*.txt')
         data_infos = []
         if not ann_files:  # test phase
-            ann_files = glob.glob(ann_folder + '/*.png')
+            ann_files = glob.glob(ann_folder + '/*{}'.format(self.prefix))
             for ann_file in ann_files:
                 data_info = {}
                 img_id = osp.split(ann_file)[1][:-4]
-                img_name = img_id + '.png'
+                img_name = img_id + self.prefix
                 data_info['filename'] = img_name
                 data_info['ann'] = {}
                 data_info['ann']['bboxes'] = []
@@ -79,7 +80,7 @@ class DOTADataset(CustomDataset):
             for ann_file in ann_files:
                 data_info = {}
                 img_id = osp.split(ann_file)[1][:-4]
-                img_name = img_id + '.png'
+                img_name = img_id + self.prefix
                 data_info['filename'] = img_name
                 data_info['ann'] = {}
                 gt_bboxes = []
@@ -334,6 +335,106 @@ class DOTADataset(CustomDataset):
         return result_files, tmp_dir
 
 
+@ROTATED_DATASETS.register_module()
+class IJCAIDataset(DOTADataset):
+    CLASSES = (
+        'OCbottle', 'battery', 'lighter', 'electronicequipment', 
+        'umbrella', 'metalbottle', 'pressure', 'glassbottle', 'knife'
+    )
+
+    PALETTE = [(165, 42, 42), (189, 183, 107), (0, 255, 0), (255, 0, 0),
+               (138, 43, 226), (255, 128, 0), (255, 0, 255), (0, 255, 255),
+               (255, 193, 193)]
+
+    def __init__(self, ann_file, pipeline, version='oc', difficulty=100, **kwargs):
+        super().__init__(ann_file, pipeline, version, difficulty, **kwargs)
+
+    def format_results(self, results, submission_dir=None, nproc=4, **kwargs):
+        """Format the results to submission text (standard format for DOTA
+        evaluation).
+
+        Args:
+            results (list): Testing results of the dataset.
+            submission_dir (str, optional): The folder that contains submission
+                files. If not specified, a temp folder will be created.
+                Default: None.
+            nproc (int, optional): number of process.
+
+        Returns:
+            tuple:
+
+                - result_files (dict): a dict containing the json filepaths
+                - tmp_dir (str): the temporal directory created for saving \
+                    json files when submission_dir is not specified.
+        """
+
+        nproc = min(nproc, os.cpu_count())
+        assert isinstance(results, list), 'results must be a list'
+        assert len(results) == len(self), (
+            f'The length of results is not equal to '
+            f'the dataset len: {len(results)} != {len(self)}')
+        if submission_dir is None:
+            submission_dir = tempfile.TemporaryDirectory()
+        else:
+            tmp_dir = None
+
+        collector = defaultdict(list)
+        for idx in range(len(self)):
+            result = results[idx]
+            img_id = self.img_ids[idx]
+            new_result = []
+            for i, dets in enumerate(result):
+                bboxes, scores = dets[:, :-1], dets[:, [-1]]
+                ori_bboxes = bboxes.copy()
+                labels = np.zeros((bboxes.shape[0], 1)) + i
+                new_result.append(
+                    np.concatenate([labels, ori_bboxes, scores], axis=1))
+
+            new_result = np.concatenate(new_result, axis=0)
+            collector[img_id+".jpg"].append(new_result)
+
+        merge_func = partial(_merge_func, CLASSES=self.CLASSES, iou_thr=0.3)
+        if nproc <= 1:
+            print('Single processing')
+            merged_results = mmcv.track_iter_progress(
+                (map(merge_func, collector.items()), len(collector)))
+        else:
+            print('Multiple processing')
+            merged_results = mmcv.track_parallel_progress(
+                merge_func, list(collector.items()), nproc)
+
+        id_list, dets_list = zip(*merged_results)
+
+        result_files = self._results2submission(id_list, dets_list,
+                                                submission_dir)
+
+        return result_files, tmp_dir
+
+    def _results2submission(self, id_list, dets_list, out_folder=None):
+        """Generate the submission of full images.
+
+        Args:
+            id_list (list): Id of images.
+            dets_list (list): Detection results of per class.
+            out_folder (str, optional): Folder of submission.
+        """
+
+        os.makedirs(out_folder, exist_ok=True)
+        res_file = osp.join(out_folder, 'results.txt')
+        
+        with open(res_file, 'w') as f:
+            for img_id, dets_per_cls in zip(id_list, dets_list):
+                for i, dets in enumerate(dets_per_cls):
+                    if dets.size == 0:
+                        continue
+                    bboxes = obb2poly_np(dets, self.version)
+                    for bbox in bboxes:
+                        txt_element = [img_id, self.CLASSES[i], str(bbox[-1])
+                                    ] + [f'{p:.2f}' for p in bbox[:-1]]
+                        f.writelines(' '.join(txt_element) + '\n')
+
+        return res_file
+    
 def _merge_func(info, CLASSES, iou_thr):
     """Merging patch bboxes into full image.
 

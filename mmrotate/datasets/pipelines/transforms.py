@@ -7,7 +7,8 @@ import numpy as np
 import torch
 from mmcv.ops import box_iou_rotated
 from mmdet.datasets.pipelines.transforms import (Mosaic, RandomCrop,
-                                                 RandomFlip, Resize)
+                                                 RandomFlip, Resize,
+                                                 MixUp)
 from numpy import random
 
 from mmrotate.core import norm_angle, obb2poly_np, poly2obb_np
@@ -28,12 +29,14 @@ class RResize(Resize):
     def __init__(self,
                  img_scale=None,
                  multiscale_mode='range',
-                 ratio_range=None):
+                 ratio_range=None,
+                 keep_ratio=True
+                 ):
         super(RResize, self).__init__(
             img_scale=img_scale,
             multiscale_mode=multiscale_mode,
             ratio_range=ratio_range,
-            keep_ratio=True)
+            keep_ratio=keep_ratio)
 
     def _resize_bboxes(self, results):
         """Resize bounding boxes with ``results['scale_factor']``."""
@@ -278,6 +281,199 @@ class PolyRandomRotate(object):
 
 
 @ROTATED_PIPELINES.register_module()
+class RMixUp(MixUp):
+    def __init__(self,
+                 img_scale=(640, 640),
+                 ratio_range=(0.5, 1.5),
+                 flip_ratio=0.5,
+                 pad_val=114,
+                 max_iters=15,
+                 min_bbox_size=5,
+                 min_area_ratio=0.2,
+                 max_aspect_ratio=20,
+                 bbox_clip_border=True,
+                 skip_filter=True):
+        super(RMixUp, self).__init__(
+            img_scale=img_scale,
+            ratio_range=ratio_range,
+            flip_ratio=flip_ratio,
+            pad_val=pad_val,
+            max_iters=max_iters,
+            min_bbox_size=min_bbox_size,
+            min_area_ratio=min_area_ratio,
+            max_aspect_ratio=max_aspect_ratio,
+            bbox_clip_border=bbox_clip_border,
+            skip_filter=skip_filter
+        )
+        
+    def _mixup_transform(self, results):
+        """MixUp transform function.
+
+        Args:
+            results (dict): Result dict.
+
+        Returns:
+            dict: Updated result dict.
+        """
+
+        assert 'mix_results' in results
+        assert len(
+            results['mix_results']) == 1, 'MixUp only support 2 images now !'
+
+        if results['mix_results'][0]['gt_bboxes'].shape[0] == 0:
+            # empty bbox
+            return results
+
+        retrieve_results = results['mix_results'][0]
+        retrieve_img = retrieve_results['img']
+
+        jit_factor = random.uniform(*self.ratio_range)
+        is_filp = random.uniform(0, 1) < self.flip_ratio
+
+        if len(retrieve_img.shape) == 3:
+            out_img = np.ones(
+                (self.dynamic_scale[0], self.dynamic_scale[1], 3),
+                dtype=retrieve_img.dtype) * self.pad_val
+        else:
+            out_img = np.ones(
+                self.dynamic_scale, dtype=retrieve_img.dtype) * self.pad_val
+
+        # 1. keep_ratio resize
+        scale_ratio = min(self.dynamic_scale[0] / retrieve_img.shape[0],
+                          self.dynamic_scale[1] / retrieve_img.shape[1])
+        retrieve_img = mmcv.imresize(
+            retrieve_img, (int(retrieve_img.shape[1] * scale_ratio),
+                           int(retrieve_img.shape[0] * scale_ratio)))
+
+        # 2. paste
+        out_img[:retrieve_img.shape[0], :retrieve_img.shape[1]] = retrieve_img
+
+        # 3. scale jit
+        scale_ratio *= jit_factor
+        out_img = mmcv.imresize(out_img.astype(retrieve_img.dtype), (int(out_img.shape[1] * jit_factor),
+                                          int(out_img.shape[0] * jit_factor)))
+        
+        # 4. flip
+        if is_filp:
+            """origin"""
+            # out_img = out_img[:, ::-1, :]
+            """modify"""
+            out_img = mmcv.imflip(
+                    out_img, direction='horizontal')
+
+        # 5. random crop
+        ori_img = results['img']
+        origin_h, origin_w = out_img.shape[:2]
+        target_h, target_w = ori_img.shape[:2]
+        padded_img = np.zeros(
+            (max(origin_h, target_h), max(origin_w,
+                                          target_w), 3)).astype(np.uint8)
+        padded_img[:origin_h, :origin_w] = out_img
+
+        x_offset, y_offset = 0, 0
+        if padded_img.shape[0] > target_h:
+            y_offset = random.randint(0, padded_img.shape[0] - target_h)
+        if padded_img.shape[1] > target_w:
+            x_offset = random.randint(0, padded_img.shape[1] - target_w)
+        padded_cropped_img = padded_img[y_offset:y_offset + target_h,
+                                        x_offset:x_offset + target_w]
+
+        # 6. adjust bbox
+        retrieve_gt_bboxes = retrieve_results['gt_bboxes']
+
+        """origin"""
+        # retrieve_gt_bboxes[:, 0::2] = retrieve_gt_bboxes[:, 0::2] * scale_ratio
+        # retrieve_gt_bboxes[:, 1::2] = retrieve_gt_bboxes[:, 1::2] * scale_ratio
+        # if self.bbox_clip_border:
+        #     retrieve_gt_bboxes[:, 0::2] = np.clip(retrieve_gt_bboxes[:, 0::2],
+        #                                           0, origin_w)
+        #     retrieve_gt_bboxes[:, 1::2] = np.clip(retrieve_gt_bboxes[:, 1::2],
+        #                                           0, origin_h)
+
+        """modify"""
+        orig_shape = retrieve_gt_bboxes.shape
+        bboxes = retrieve_gt_bboxes.reshape((-1, 5))
+        bboxes[:, 0] *= scale_ratio
+        bboxes[:, 1] *= scale_ratio
+        bboxes[:, 2:4] *= np.sqrt(scale_ratio * scale_ratio)
+        retrieve_gt_bboxes = bboxes.reshape(orig_shape)
+
+        if is_filp:
+            """origin"""
+            # retrieve_gt_bboxes[:, 0::2] = (
+            #     origin_w - retrieve_gt_bboxes[:, 0::2][:, ::-1])
+            """modify"""
+            retrieve_gt_bboxes[:, 0] = retrieve_img.shape[1] - retrieve_gt_bboxes[:, 0] - 1
+
+        # 7. filter
+        cp_retrieve_gt_bboxes = retrieve_gt_bboxes.copy()
+        """origin"""
+        # cp_retrieve_gt_bboxes[:, 0::2] = \
+        #     cp_retrieve_gt_bboxes[:, 0::2] - x_offset
+        # cp_retrieve_gt_bboxes[:, 1::2] = \
+        #     cp_retrieve_gt_bboxes[:, 1::2] - y_offset
+        """modify"""
+        cp_retrieve_gt_bboxes[:, 0] = \
+            cp_retrieve_gt_bboxes[:, 0] - x_offset
+        cp_retrieve_gt_bboxes[:, 1] = \
+            cp_retrieve_gt_bboxes[:, 1] - y_offset
+
+        """origin"""
+        # if self.bbox_clip_border:
+        #     cp_retrieve_gt_bboxes[:, 0::2] = np.clip(
+        #         cp_retrieve_gt_bboxes[:, 0::2], 0, target_w)
+        #     cp_retrieve_gt_bboxes[:, 1::2] = np.clip(
+        #         cp_retrieve_gt_bboxes[:, 1::2], 0, target_h)
+
+        # 8. mix up
+        ori_img = ori_img.astype(np.float32)
+        mixup_img = 0.5 * ori_img + 0.5 * padded_cropped_img.astype(np.float32)
+
+        retrieve_gt_labels = retrieve_results['gt_labels']
+        if not self.skip_filter:
+            keep_list = self._filter_box_candidates(retrieve_gt_bboxes.T,
+                                                    cp_retrieve_gt_bboxes.T)
+
+            retrieve_gt_labels = retrieve_gt_labels[keep_list]
+            cp_retrieve_gt_bboxes = cp_retrieve_gt_bboxes[keep_list]
+
+        mixup_gt_bboxes = np.concatenate(
+            (results['gt_bboxes'], cp_retrieve_gt_bboxes), axis=0)
+        mixup_gt_labels = np.concatenate(
+            (results['gt_labels'], retrieve_gt_labels), axis=0)
+
+        """origin"""
+        # remove outside bbox
+        # inside_inds = find_inside_bboxes(mixup_gt_bboxes, target_h, target_w)
+        # mixup_gt_bboxes = mixup_gt_bboxes[inside_inds]
+        # mixup_gt_labels = mixup_gt_labels[inside_inds]
+
+        results['img'] = mixup_img.astype(np.uint8)
+        results['img_shape'] = mixup_img.shape
+        results['gt_bboxes'] = mixup_gt_bboxes
+        results['gt_labels'] = mixup_gt_labels
+
+        return results
+
+    def _filter_box_candidates(self, bbox1, bbox2):
+        """Compute candidate boxes which include following 5 things:
+
+        bbox1 before augment, bbox2 after augment, min_bbox_size (pixels),
+        min_area_ratio, max_aspect_ratio.
+        """
+
+        # w1, h1 = bbox1[2] - bbox1[0], bbox1[3] - bbox1[1]
+        # w2, h2 = bbox2[2] - bbox2[0], bbox2[3] - bbox2[1]
+        w1, h1 = bbox1[2], bbox1[3]
+        w2, h2 = bbox2[2], bbox2[3]
+        ar = np.maximum(w2 / (h2 + 1e-16), h2 / (w2 + 1e-16))
+        return ((w2 > self.min_bbox_size)
+                & (h2 > self.min_bbox_size)
+                & (w2 * h2 / (w1 * h1 + 1e-16) > self.min_area_ratio)
+                & (ar < self.max_aspect_ratio))
+
+
+@ROTATED_PIPELINES.register_module()
 class RRandomCrop(RandomCrop):
     """Random crop the image & bboxes.
 
@@ -316,11 +512,20 @@ class RRandomCrop(RandomCrop):
                  crop_type='absolute',
                  allow_negative_crop=False,
                  iof_thr=0.7,
-                 version='oc'):
+                 version='oc',
+                 prob=1.):
         self.version = version
         self.iof_thr = iof_thr
+        self.prob = prob
         super(RRandomCrop, self).__init__(crop_size, crop_type,
                                           allow_negative_crop)
+        self.override = True
+        self.backend = "cv2"
+        self.multiscale_mode = "range"
+        self.ratio_range = None
+        self.keep_ratio = True
+        self.interpolation = "bilinear"
+        self.img_scale = [(1024, 1024)]
 
     def _crop_data(self, results, crop_size, allow_negative_crop):
         """Function to randomly crop images, bounding boxes.
@@ -376,11 +581,161 @@ class RRandomCrop(RandomCrop):
                     and not allow_negative_crop):
                 return None
             results[key] = bboxes[valid_inds, :]
+            if len(bboxes[valid_inds, :].shape) == 3:
+                results[key] = bboxes[valid_inds, :].squeeze(0)
+
             # label fields. e.g. gt_labels and gt_labels_ignore
             label_key = self.bbox2label.get(key)
             if label_key in results:
                 results[label_key] = results[label_key][valid_inds]
 
+        return results
+
+    def _resize_img(self, results):
+        """Resize images with ``results['scale']``."""
+        for key in results.get('img_fields', ['img']):
+            if self.keep_ratio:
+                img, scale_factor = mmcv.imrescale(
+                    results[key],
+                    results['scale'],
+                    return_scale=True,
+                    interpolation=self.interpolation,
+                    backend=self.backend)
+                # the w_scale and h_scale has minor difference
+                # a real fix should be done in the mmcv.imrescale in the future
+                new_h, new_w = img.shape[:2]
+                h, w = results[key].shape[:2]
+                w_scale = new_w / w
+                h_scale = new_h / h
+            else:
+                img, w_scale, h_scale = mmcv.imresize(
+                    results[key],
+                    results['scale'],
+                    return_scale=True,
+                    interpolation=self.interpolation,
+                    backend=self.backend)
+            results[key] = img
+
+            scale_factor = np.array([w_scale, h_scale, w_scale, h_scale],
+                                    dtype=np.float32)
+            results['img_shape'] = img.shape
+            # in case that there is no padding
+            results['pad_shape'] = img.shape
+            results['scale_factor'] = scale_factor
+            results['keep_ratio'] = self.keep_ratio
+    
+    def _resize_bboxes(self, results):
+        """Resize bounding boxes with ``results['scale_factor']``."""
+        for key in results.get('bbox_fields', []):
+            bboxes = results[key]
+            orig_shape = bboxes.shape
+            bboxes = bboxes.reshape((-1, 5))
+            w_scale, h_scale, _, _ = results['scale_factor']
+            bboxes[:, 0] *= w_scale
+            bboxes[:, 1] *= h_scale
+            bboxes[:, 2:4] *= np.sqrt(w_scale * h_scale)
+            results[key] = bboxes.reshape(orig_shape)
+
+    @staticmethod
+    def random_sample(img_scales):
+        """Randomly sample an img_scale when ``multiscale_mode=='range'``.
+
+        Args:
+            img_scales (list[tuple]): Images scale range for sampling.
+                There must be two tuples in img_scales, which specify the lower
+                and upper bound of image scales.
+
+        Returns:
+            (tuple, None): Returns a tuple ``(img_scale, None)``, where \
+                ``img_scale`` is sampled scale and None is just a placeholder \
+                to be consistent with :func:`random_select`.
+        """
+
+        assert mmcv.is_list_of(img_scales, tuple) and len(img_scales) == 2
+        img_scale_long = [max(s) for s in img_scales]
+        img_scale_short = [min(s) for s in img_scales]
+        long_edge = np.random.randint(
+            min(img_scale_long),
+            max(img_scale_long) + 1)
+        short_edge = np.random.randint(
+            min(img_scale_short),
+            max(img_scale_short) + 1)
+        img_scale = (long_edge, short_edge)
+        return img_scale, None
+
+    def _random_scale(self, results):
+        """Randomly sample an img_scale according to ``ratio_range`` and
+        ``multiscale_mode``.
+
+        If ``ratio_range`` is specified, a ratio will be sampled and be
+        multiplied with ``img_scale``.
+        If multiple scales are specified by ``img_scale``, a scale will be
+        sampled according to ``multiscale_mode``.
+        Otherwise, single scale will be used.
+
+        Args:
+            results (dict): Result dict from :obj:`dataset`.
+
+        Returns:
+            dict: Two new keys 'scale` and 'scale_idx` are added into \
+                ``results``, which would be used by subsequent pipelines.
+        """
+
+        
+        if len(self.img_scale) == 1:
+            scale, scale_idx = self.img_scale[0], 0
+        elif self.multiscale_mode == 'range':
+            scale, scale_idx = self.random_sample(self.img_scale)
+        elif self.multiscale_mode == 'value':
+            scale, scale_idx = self.random_select(self.img_scale)
+        else:
+            raise NotImplementedError
+
+        results['scale'] = scale
+        results['scale_idx'] = scale_idx
+    
+    def __call__(self, results):
+        """Call function to randomly crop images, bounding boxes, masks,
+        semantic segmentation maps.
+
+        Args:
+            results (dict): Result dict from loading pipeline.
+
+        Returns:
+            dict: Randomly cropped results, 'img_shape' key in result dict is
+                updated according to crop size.
+        """
+        if random.uniform(0, 1) > self.prob:
+            return results
+        image_size = results['img'].shape[:2]
+        crop_size = self._get_crop_size(image_size)
+        results = self._crop_data(results, crop_size, self.allow_negative_crop)
+
+        if results is not None:
+            # if len(results["gt_bboxes"].shape) == 3:
+            #     print("ERROR!!!")
+            if 'scale' not in results:
+                if 'scale_factor' in results:
+                    img_shape = results['img'].shape[:2]
+                    scale_factor = results['scale_factor']
+                    assert isinstance(scale_factor, float)
+                    results['scale'] = tuple(
+                        [int(x * scale_factor) for x in img_shape][::-1])
+                else:
+                    self._random_scale(results)
+            else:
+                if not self.override:
+                    assert 'scale_factor' not in results, (
+                        'scale and scale_factor cannot be both set.')
+                else:
+                    results.pop('scale')
+                    if 'scale_factor' in results:
+                        results.pop('scale_factor')
+                    self._random_scale(results)
+
+            self._resize_img(results)
+            self._resize_bboxes(results)
+        
         return results
 
 
@@ -454,7 +809,7 @@ class RMosaic(Mosaic):
             bbox_clip_border=bbox_clip_border,
             skip_filter=skip_filter,
             pad_val=pad_val,
-            prob=1.0)
+            prob=prob)
 
     def _mosaic_transform(self, results):
         """Mosaic transform function.

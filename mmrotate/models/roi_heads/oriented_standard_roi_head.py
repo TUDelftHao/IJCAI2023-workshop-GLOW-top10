@@ -147,7 +147,7 @@ class OrientedStandardRoIHead(RotatedStandardRoIHead):
                 in the second list is the labels with shape (num_boxes, ). \
                 The length of both lists should be equal to batch_size.
         """
-
+        # proposals[0][0] shape: (2000, 6)
         rois = rbbox2roi(proposals)
         bbox_results = self._bbox_forward(x, rois)
         img_shapes = tuple(meta['img_shape'] for meta in img_metas)
@@ -183,6 +183,7 @@ class OrientedStandardRoIHead(RotatedStandardRoIHead):
                 scale_factors[i],
                 rescale=rescale,
                 cfg=rcnn_test_cfg)
+            # import pdb; pdb.set_trace()
             det_bboxes.append(det_bbox)
             det_labels.append(det_label)
         return det_bboxes, det_labels

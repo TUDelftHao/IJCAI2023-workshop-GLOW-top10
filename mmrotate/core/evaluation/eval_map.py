@@ -56,7 +56,7 @@ def tpfp_default(det_bboxes,
         else:
             raise NotImplementedError
         return tp, fp
-
+ 
     ious = box_iou_rotated(
         torch.from_numpy(det_bboxes).float(),
         torch.from_numpy(gt_bboxes).float()).numpy()
@@ -106,19 +106,19 @@ def get_cls_results(det_results, annotations, class_id):
         tuple[list[np.ndarray]]: detected bboxes, gt bboxes, ignored gt bboxes
     """
     cls_dets = [img_res[class_id] for img_res in det_results]
-
+    # import pdb; pdb.set_trace()
     cls_gts = []
     cls_gts_ignore = []
     for ann in annotations:
         gt_inds = ann['labels'] == class_id
-        cls_gts.append(ann['bboxes'][gt_inds, :])
+        cls_gts.append(np.array(ann['bboxes'])[gt_inds, :])
 
         if ann.get('labels_ignore', None) is not None:
             ignore_inds = ann['labels_ignore'] == class_id
-            cls_gts_ignore.append(ann['bboxes_ignore'][ignore_inds, :])
+            cls_gts_ignore.append(np.array(ann['bboxes_ignore'])[ignore_inds, :])
 
         else:
-            cls_gts_ignore.append(torch.zeros((0, 5), dtype=torch.float64))
+            cls_gts_ignore.append(np.zeros((0, 5), dtype=np.float64))
 
     return cls_dets, cls_gts, cls_gts_ignore
 
@@ -178,6 +178,7 @@ def eval_rbbox_map(det_results,
             det_results, annotations, i)
 
         # compute tp and fp for each image with multiple processes
+        # import pdb; pdb.set_trace()
         tpfp = pool.starmap(
             tpfp_default,
             zip(cls_dets, cls_gts, cls_gts_ignore,

@@ -10,6 +10,7 @@ import math
 from functools import partial
 import warnings
 from mmcv.cnn import build_norm_layer
+from mmrotate.models.utils import DOAM
 
 class Mlp(nn.Module):
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
@@ -132,7 +133,8 @@ class LSKNet(BaseModule):
                  depths=[3, 4, 6, 3], num_stages=4, 
                  pretrained=None,
                  init_cfg=None,
-                 norm_cfg=None):
+                 norm_cfg=None,
+                 add_occ_module=False):
         super().__init__(init_cfg=init_cfg)
         
         assert not (init_cfg and pretrained), \
@@ -145,6 +147,9 @@ class LSKNet(BaseModule):
             raise TypeError('pretrained must be a str or None')
         self.depths = depths
         self.num_stages = num_stages
+        self.add_occ_module = add_occ_module
+        if self.add_occ_module:
+            self.edge_conv2d = DOAM()
 
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]  # stochastic depth decay rule
         cur = 0
@@ -200,7 +205,11 @@ class LSKNet(BaseModule):
         self.head = nn.Linear(self.embed_dim, num_classes) if num_classes > 0 else nn.Identity()
 
     def forward_features(self, x):
+        # print("input shape: ", x.shape)
         B = x.shape[0]
+
+        if self.add_occ_module:
+            x = self.edge_conv2d(x)
         outs = []
         for i in range(self.num_stages):
             patch_embed = getattr(self, f"patch_embed{i + 1}")
@@ -225,6 +234,7 @@ class DWConv(nn.Module):
     def __init__(self, dim=768):
         super(DWConv, self).__init__()
         self.dwconv = nn.Conv2d(dim, dim, 3, 1, 1, bias=True, groups=dim)
+        # self.dwconv = nn.Conv2d(dim, dim, 3, 1, 1, bias=True, groups=1)
 
     def forward(self, x):
         x = self.dwconv(x)
