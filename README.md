@@ -22,7 +22,7 @@ Base on existing amazing work, some new features and toolkits used for oriented 
 * Merge and average several checkpoints: `./tools/model_ensamble.py`
 * Crop rotated objects for classification model training: `./tools/obj_crop.py`
 
-* Visulize the predicted false positive, false negative and true positive objects: `./tools/results_analysis.py`. An example is shown below (partially cropped from original dataset to avoid copyright issue. If there are any problem of using this image, please contact me to delete it), where green boxes are tp, red boxes are fp, blue boxes are fn:
+* Visulize the predicted false positive, false negative and true positive objects: `./tools/results_analysis.py`. An example is shown below (partially cropped from original dataset to avoid copyright issue. **If there are any problem of using this image, please contact me to delete it**), where green boxes are tp, red boxes are fp, blue boxes are fn:
 <div style="text-align: center;">
     <img src="docs/analysis.png" alt="Centered Image" style="width: 45%;">
 </div>
