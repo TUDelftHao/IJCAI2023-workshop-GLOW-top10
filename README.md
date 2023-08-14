@@ -21,16 +21,20 @@ Base on existing amazing work, some new features and toolkits used for oriented 
 * Substitute original detector weight with a new backbone ckpt weight: `./tools/merge_ckpt.py`
 * Merge and average several checkpoints: `./tools/model_ensamble.py`
 * Crop rotated objects for classification model training: `./tools/obj_crop.py`
+
 * Visulize the predicted false positive, false negative and true positive objects: `./tools/results_analysis.py`. An example is shown below (partially cropped from original image to avoid copyright problem), where green boxes are tp, red boxes are fp, blue boxes are fn:
-<div style="display: flex; justify-content: center;">
-    <img src="docs/analysis.png" alt="Image 1" style="width: 60%; margin-right: 2%;">
+<div style="text-align: center;">
+    <img src="docs/analysis.png" alt="Centered Image" style="display: inline-block;">
 </div>
+
 * Crop the false positive and false negative objects: `./tools/get_fp_fn.py`
 * Copy-paste augmentation skill with rotated objects: `./tools/copy_paste.py`. A comparison is shown as following(left is a crop patch from training data, right is the augmented version with several random rotated knifes pasted on it):
 <div style="display: flex; justify-content: center;">
     <img src="docs/origin.png" alt="Image 1" style="width: 45%; margin-right: 2%;">
     <img src="docs/knife_paste.png" alt="Image 2" style="width: 45%;">
 </div>
+
+
 ### New Features
 * SWA: [reference config](configs/IJCAI/lsk_s_ema_fpn_1x_dota_le90_swa.py)
 * Rotated Mosaic: [reference config](configs/IJCAI/lsk_s_ema_fpn_1x_dota_le90_mosaic.py)
