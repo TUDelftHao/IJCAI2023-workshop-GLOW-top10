@@ -1,7 +1,7 @@
 
 
 
-## This repository is the solution ranked at Top 10 in the [IJCAI 2023 Workshop Challenge](https://sites.google.com/view/glow-ijcai-23/challenge) "Generalizing from Limited Resources in the Open World" with Track II of Rotated Detection competition, implemented based on "Large Selective Kernel Network for Remote Sensing Object Detection" at: [https://arxiv.org/pdf/2303.09030.pdf](https://arxiv.org/pdf/2303.09030.pdf). The original repo is here: [Large-Selective-Kernel-Network](https://github.com/zcablii/Large-Selective-Kernel-Network).
+## This repository is the solution ranked in the top 10 in the [IJCAI 2023 Workshop Challenge](https://sites.google.com/view/glow-ijcai-23/challenge) "Generalizing from Limited Resources in the Open World" with Track II of Rotated Detection competition, implemented based on "Large Selective Kernel Network for Remote Sensing Object Detection" at: [https://arxiv.org/pdf/2303.09030.pdf](https://arxiv.org/pdf/2303.09030.pdf). The original repo is here: [Large-Selective-Kernel-Network](https://github.com/zcablii/Large-Selective-Kernel-Network).
 
 
 
