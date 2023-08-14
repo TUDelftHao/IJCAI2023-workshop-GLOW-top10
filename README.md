@@ -24,7 +24,7 @@ Base on existing amazing work, some new features and toolkits used for oriented 
 
 * Visulize the predicted false positive, false negative and true positive objects: `./tools/results_analysis.py`. An example is shown below (partially cropped from original image to avoid copyright problem), where green boxes are tp, red boxes are fp, blue boxes are fn:
 <div style="text-align: center;">
-    <img src="docs/analysis.png" alt="Centered Image" style="display: inline-block;">
+    <img src="docs/analysis.png" alt="Centered Image" style="width: 45%;">
 </div>
 
 * Crop the false positive and false negative objects: `./tools/get_fp_fn.py`
