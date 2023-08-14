@@ -67,9 +67,9 @@ Please refer to [Install Guide](https://mmrotate.readthedocs.io/en/latest/instal
 ```shell
 conda create --name openmmlab python=3.8 -y
 conda activate openmmlab
-git clone https://github.com/TUDelftHao/Large-Selective-Kernel-Network.git
+git clone https://github.com/TUDelftHao/IJCAI2023-workshop-GLOW-top10.git
 git checkout -b IJCAI2023-workshop origin/IJCAI2023-workshop
-cd Large-Selective-Kernel-Network
+cd IJCAI2023-workshop-GLOW-top10
 pip install -r custom_requirements.txt
 pip install -v -e .
 ```
